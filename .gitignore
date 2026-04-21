@@ -1,0 +1,10 @@
+.env
+*.pyc
+__pycache__/
+.venv/
+
+openclaw.json
+*.log
+
+.sqlbot-skill-state.json
+artifacts/
