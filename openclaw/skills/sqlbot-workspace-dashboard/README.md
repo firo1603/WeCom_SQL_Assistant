@@ -51,14 +51,17 @@ artifacts/
 The skill supports structured execution tracing via optional CLI flags:
 
 ```bash
-# Emit trace events to monitoring/sqlbot-events.jsonl (relative to skill dir)
-python3 sqlbot_skills.py --emit-trace ask "<question>"
+# Trace is enabled by default, events written to monitoring/sqlbot-events.jsonl (relative to skill dir)
+python3 sqlbot_skills.py ask "<question>"
+
+# Disable trace
+python3 sqlbot_skills.py --no-emit-trace ask "<question>"
 
 # Use a custom trace file
 python3 sqlbot_skills.py --trace-file /path/to/events.jsonl ask "<question>"
 
 # Use a custom trace ID
-python3 sqlbot_skills.py --trace-id "my-trace-001" --emit-trace ask "<question>"
+python3 sqlbot_skills.py --trace-id "my-trace-001" ask "<question>"
 ```
 
 Trace events are written as JSONL, one event per line, one line per execution stage.

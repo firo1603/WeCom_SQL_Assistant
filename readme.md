@@ -190,14 +190,17 @@ artifacts/
 `sqlbot_skills.py ask` 支持开启执行链路跟踪：
 
 ```bash
-# 开启 trace，默认写入 monitoring/sqlbot-events.jsonl（skill 目录下）
-python3 sqlbot_skills.py --emit-trace ask "本周各客户出货量"
+# trace 默认启用，写入 monitoring/sqlbot-events.jsonl（skill 目录下）
+python3 sqlbot_skills.py ask "本周各客户出货量"
+
+# 关闭 trace
+python3 sqlbot_skills.py --no-emit-trace ask "本周各客户出货量"
 
 # 自定义 trace 文件路径
 python3 sqlbot_skills.py --trace-file /path/to/events.jsonl ask "问题"
 
 # 指定 trace ID
-python3 sqlbot_skills.py --trace-id "run-001" --emit-trace ask "问题"
+python3 sqlbot_skills.py --trace-id "run-001" ask "问题"
 ```
 
 每条事件记录一个执行阶段（JSONL 格式），包含 `trace_id`、`stage`、`status`、`duration_ms`、`error_kind` 等字段。`ask` 返回值中也包含顶层 `telemetry` 字段，提供完整的阶段耗时分解。

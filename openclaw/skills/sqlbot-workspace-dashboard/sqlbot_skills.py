@@ -1692,7 +1692,7 @@ class WorkspaceDashboardSkill:
         allow_default_scope: bool = False,
         trace_id: str | None = None,
         trace_file: str | None = None,
-        emit_trace: bool = False,
+        emit_trace: bool = True,
     ) -> None:
         settings = SkillSettings.load(
             env_file=env_file,
@@ -2159,10 +2159,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--trace-id", default=None, help="Trace ID for this invocation. Auto-generated if omitted when --emit-trace is set.")
     parser.add_argument("--trace-file", default=None, help="Path to append structured trace events (JSONL). Overrides --emit-trace target.")
     parser.add_argument(
-        "--emit-trace",
-        action="store_true",
-        help=f"Emit structured trace events to {DEFAULT_TRACE_EVENT_FILE}.",
+        "--no-emit-trace",
+        dest="emit_trace",
+        action="store_false",
+        help=f"Disable structured trace events (default: enabled, writes to {DEFAULT_TRACE_EVENT_FILE}).",
     )
+    parser.set_defaults(emit_trace=True)
 
     subparsers = parser.add_subparsers(dest="command", required=True)
 

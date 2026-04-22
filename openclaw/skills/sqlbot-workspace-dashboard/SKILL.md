@@ -207,8 +207,8 @@ Do not expose `telemetry` or `artifacts` paths to end users in normal operation.
   - `--openclaw-agent-id`
   - `--allow-default-scope`
   These are mainly for testing and explicit session routing.
-- To enable structured trace emission (writes JSONL to `monitoring/sqlbot-events.jsonl` in the skill directory):
-  - `--emit-trace`: enable tracing with auto-generated trace ID
+- Structured trace is **enabled by default** (writes JSONL to `monitoring/sqlbot-events.jsonl` in the skill directory):
+  - `--no-emit-trace`: disable trace emission
   - `--trace-id <id>`: override trace ID
   - `--trace-file <path>`: write trace events to a custom file path
   These flags are optional and intended for observability. Do not require them for normal production use.
