@@ -30,3 +30,56 @@ Image/PDF export uses Playwright. If Chromium is missing in your environment, in
 ```bash
 playwright install chromium
 ```
+
+## Artifacts
+
+Each `ask` call writes the following files into the `artifacts/` directory alongside the skill:
+
+```text
+artifacts/
+  <scope_id>/
+    <YYYYMMDD-HHMMSS>-record-<id>/
+      raw-result.json      # raw SQLBot API response
+      normalized.json      # normalized fields, rows, chart plan
+      data.csv             # tabular data (if rows returned)
+      chart.png            # rendered chart (if chart plan available)
+      manifest.json        # trace linkage, session info, artifact index
+```
+
+## Structured tracing
+
+The skill supports structured execution tracing via optional CLI flags:
+
+```bash
+# Emit trace events to monitoring/sqlbot-events.jsonl (relative to skill dir)
+python3 sqlbot_skills.py --emit-trace ask "<question>"
+
+# Use a custom trace file
+python3 sqlbot_skills.py --trace-file /path/to/events.jsonl ask "<question>"
+
+# Use a custom trace ID
+python3 sqlbot_skills.py --trace-id "my-trace-001" --emit-trace ask "<question>"
+```
+
+Trace events are written as JSONL, one event per line, one line per execution stage.
+
+The `ask` result also includes a top-level `telemetry` field with:
+- `trace_id`
+- `started_at` / `finished_at`
+- `duration_ms`
+- `stage_durations_ms` (per-stage breakdown)
+
+## Error classification
+
+`ask` results include `summary.error_kind` with a stable machine-readable value:
+
+| `error_kind` | Meaning |
+|---|---|
+| `auth_error` | API key invalid or unauthorized |
+| `config_error` | Workspace or datasource not found |
+| `network_error` | Cannot reach SQLBot service |
+| `sql_execution_error` | SQL generation or execution failure |
+| `timeout` | Request timed out |
+| `sqlbot_api_error` | Other SQLBot API error |
+| `empty_result` | Query succeeded but returned no rows |
+| `null` | Query succeeded with data |

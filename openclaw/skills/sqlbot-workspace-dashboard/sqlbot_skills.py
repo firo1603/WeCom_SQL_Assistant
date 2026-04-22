@@ -26,6 +26,7 @@ DEFAULT_DASHBOARD_EXPORT_FORMAT = "jpg"
 DEFAULT_PREVIEW_ROWS = 8
 DEFAULT_TABLE_ROWS = 20
 DEFAULT_TOP_N = 15
+DEFAULT_TRACE_EVENT_FILE = "monitoring/sqlbot-events.jsonl"
 SCREENSHOT_EXPORT_FORMATS = {"jpg", "jpeg", "png"}
 
 
@@ -816,6 +817,24 @@ def _summarize_execution_error(raw_error: Any) -> str:
     return text
 
 
+def _classify_error_kind(raw_error: Any) -> str:
+    text = _compact_text(raw_error, limit=200) or ""
+    lowered = text.casefold()
+    if "invalid api key" in lowered or "authentication" in lowered or "unauthorized" in lowered or "401" in lowered:
+        return "auth_error"
+    if "workspace not found" in lowered or "datasource not found" in lowered:
+        return "config_error"
+    if "permission" in lowered or "forbidden" in lowered or "权限" in text:
+        return "auth_error"
+    if "timeout" in lowered or "timed out" in lowered or "超时" in text:
+        return "timeout"
+    if "failed to reach sqlbot" in lowered or "connection" in lowered or "连接" in text:
+        return "network_error"
+    if "sql" in lowered and ("error" in lowered or "失败" in text):
+        return "sql_execution_error"
+    return "sqlbot_api_error"
+
+
 def _build_ask_outcome(
     *,
     result: dict[str, Any],
@@ -826,8 +845,10 @@ def _build_ask_outcome(
     raw_error = _coalesce(result.get("error"))
     if raw_error is not None:
         error_reason = _summarize_execution_error(raw_error)
+        error_kind = _classify_error_kind(raw_error)
         return {
             "status": "error",
+            "error_kind": error_kind,
             "error_reason": error_reason,
             "user_hint": "请直接补充指标、对象、时间范围或筛选条件后重新提问。",
             "summary_lines": [
@@ -839,6 +860,7 @@ def _build_ask_outcome(
         if not result.get("finished") and result.get("record_id") is None:
             return {
                 "status": "error",
+                "error_kind": "sqlbot_api_error",
                 "error_reason": "未收到有效查询结果",
                 "user_hint": "请直接补充指标、对象、时间范围或筛选条件后重新提问。",
                 "summary_lines": [
@@ -848,6 +870,7 @@ def _build_ask_outcome(
             }
         return {
             "status": "empty",
+            "error_kind": "empty_result",
             "error_reason": None,
             "user_hint": "请调整时间范围、指标名称、查询对象或筛选条件后重试。",
             "summary_lines": [
@@ -857,6 +880,7 @@ def _build_ask_outcome(
         }
     return {
         "status": "ok",
+        "error_kind": None,
         "error_reason": None,
         "user_hint": None,
         "summary_lines": _build_summary_lines(fields=fields, rows=rows, chart_plan=chart_plan),
@@ -1072,6 +1096,99 @@ def _render_chart_artifact(path: Path, *, chart_plan: dict[str, Any]) -> None:
         rows=chart_plan["rows"],
         title=chart_plan["title"],
     )
+
+
+class _TraceEmitter:
+    """结构化执行阶段 tracer，将事件追加写入 JSONL 文件。"""
+
+    def __init__(
+        self,
+        *,
+        trace_id: str,
+        emit_file: "Path | None",
+        session_key: "str | None" = None,
+        session_id: "str | None" = None,
+    ) -> None:
+        self.trace_id = trace_id
+        self.emit_file = emit_file
+        self.session_key = session_key
+        self.session_id = session_id
+        self._workspace: "str | None" = None
+        self._datasource: "str | None" = None
+        self._chat_id: "int | None" = None
+        self._record_id: "int | None" = None
+        self._stage_start: "dict[str, float]" = {}
+        self._stage_durations_ms: "dict[str, int]" = {}
+        self._started_at = _now_iso()
+        self._started_ts = time.time()
+
+    def update_context(
+        self,
+        *,
+        workspace: "str | None" = None,
+        datasource: "str | None" = None,
+        chat_id: "int | None" = None,
+        record_id: "int | None" = None,
+    ) -> None:
+        if workspace is not None:
+            self._workspace = workspace
+        if datasource is not None:
+            self._datasource = datasource
+        if chat_id is not None:
+            self._chat_id = chat_id
+        if record_id is not None:
+            self._record_id = record_id
+
+    def stage_start(self, stage: str) -> None:
+        self._stage_start[stage] = time.time()
+
+    def stage_end(
+        self,
+        stage: str,
+        *,
+        status: str = "ok",
+        error_kind: "str | None" = None,
+        error_message: "str | None" = None,
+    ) -> None:
+        started = self._stage_start.pop(stage, self._started_ts)
+        duration_ms = int((time.time() - started) * 1000)
+        self._stage_durations_ms[stage] = duration_ms
+        self._emit(
+            {
+                "trace_id": self.trace_id,
+                "ts": _now_iso(),
+                "stage": stage,
+                "status": status,
+                "session_key": self.session_key,
+                "session_id": self.session_id,
+                "workspace": self._workspace,
+                "datasource": self._datasource,
+                "chat_id": self._chat_id,
+                "record_id": self._record_id,
+                "duration_ms": duration_ms,
+                "error_kind": error_kind,
+                "error_message": error_message,
+            }
+        )
+
+    def _emit(self, event: "dict[str, Any]") -> None:
+        if self.emit_file is None:
+            return
+        try:
+            self.emit_file.parent.mkdir(parents=True, exist_ok=True)
+            with self.emit_file.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def build_telemetry(self) -> "dict[str, Any]":
+        return {
+            "trace_id": self.trace_id,
+            "started_at": self._started_at,
+            "finished_at": _now_iso(),
+            "duration_ms": int((time.time() - self._started_ts) * 1000),
+            "stage_durations_ms": dict(self._stage_durations_ms),
+        }
 
 
 class SQLBotClient:
@@ -1573,6 +1690,9 @@ class WorkspaceDashboardSkill:
         openclaw_session_id: str | None = None,
         openclaw_agent_id: str | None = None,
         allow_default_scope: bool = False,
+        trace_id: str | None = None,
+        trace_file: str | None = None,
+        emit_trace: bool = False,
     ) -> None:
         settings = SkillSettings.load(
             env_file=env_file,
@@ -1602,6 +1722,11 @@ class WorkspaceDashboardSkill:
         self.exporter = DashboardExporter(self.client, browser_path=settings.browser_path)
         self.artifact_root = self.state_path.parent / "artifacts"
         self.allow_default_scope = allow_default_scope
+        self.trace_id = _coalesce(trace_id)
+        _resolved_trace_file = _coalesce(trace_file) or (
+            str(Path(__file__).resolve().parent / DEFAULT_TRACE_EVENT_FILE) if emit_trace else None
+        )
+        self.trace_file = _resolved_trace_file
 
     def list_workspaces(self) -> list[Workspace]:
         return self.client.list_workspaces()
@@ -1701,9 +1826,26 @@ class WorkspaceDashboardSkill:
         preview_rows: int = DEFAULT_PREVIEW_ROWS,
         top_n: int = DEFAULT_TOP_N,
     ) -> dict[str, Any]:
+        trace_id = self.trace_id or f"sqlbot:{self.context.session_id or self.context.session_key or 'na'}:{int(time.time())}:{os.getpid()}"
+        tracer = _TraceEmitter(
+            trace_id=trace_id,
+            emit_file=Path(self.trace_file).expanduser() if self.trace_file else None,
+            session_key=self.context.session_key,
+            session_id=self.context.session_id,
+        )
+
+        tracer.stage_start("ask.finish")
+
+        tracer.stage_start("session_context.resolve")
         self._ensure_session_context(action="ask")
         session = self._session_state()
+        tracer.stage_end("session_context.resolve")
+
+        tracer.stage_start("workspace.resolve")
         resolved_workspace = self._switch_workspace_if_requested(workspace, session=session)
+        tracer.stage_end("workspace.resolve")
+
+        tracer.stage_start("datasource.resolve")
         selected_datasource = datasource
         if selected_datasource is None and chat_id is None and not force_new_chat:
             state_workspace = session.current_workspace
@@ -1723,10 +1865,29 @@ class WorkspaceDashboardSkill:
             ):
                 selected_datasource = session.current_datasource
         if effective_chat_id is None and selected_datasource is None:
+            tracer.stage_end("datasource.resolve", status="error", error_kind="config_error", error_message="No datasource bound.")
+            tracer.stage_end("ask.finish", status="error", error_kind="config_error")
             raise ConfigError(
                 "No datasource is bound for this OpenClaw session. Run `datasource switch <id>` first or pass `--datasource`."
             )
+        tracer.stage_end("datasource.resolve")
+        tracer.update_context(
+            workspace=session.current_workspace.name if session.current_workspace else None,
+            datasource=(
+                selected_datasource.name
+                if isinstance(selected_datasource, Datasource)
+                else str(selected_datasource)
+            ) if selected_datasource else None,
+        )
+
+        tracer.stage_start("question.stream")
         result = self.client.ask_data(question, datasource=selected_datasource, chat_id=effective_chat_id)
+        tracer.update_context(
+            chat_id=_maybe_int(result.get("chat_id")),
+            record_id=_maybe_int(result.get("record_id")),
+        )
+        tracer.stage_end("question.stream")
+
         next_datasource = None
         if selected_datasource is not None:
             next_datasource = self.client.resolve_datasource(selected_datasource)
@@ -1734,9 +1895,16 @@ class WorkspaceDashboardSkill:
             datasource_id = int(result["datasource"]["id"])
             datasource_list = self.client.list_datasources()
             next_datasource = next((item for item in datasource_list if item.id == datasource_id), None)
+
+        tracer.stage_start("result.normalize")
         fields, rows = _normalize_data_payload(result.get("data"))
         chart_payload = _parse_chart_payload(result.get("chart"))
+        tracer.stage_end("result.normalize")
+
+        tracer.stage_start("chart.plan")
         chart_plan = _choose_chart_plan(fields=fields, rows=rows, chart_payload=chart_payload, top_n=top_n)
+        tracer.stage_end("chart.plan")
+
         outcome = _build_ask_outcome(result=result, fields=fields, rows=rows, chart_plan=chart_plan)
         artifacts = self._build_ask_artifacts(
             question=question,
@@ -1744,8 +1912,11 @@ class WorkspaceDashboardSkill:
             rows=rows,
             result=result,
             chart_plan=chart_plan,
+            tracer=tracer,
+            trace_id=trace_id,
         )
 
+        tracer.stage_start("state.save")
         session.current_workspace = resolved_workspace or session.current_workspace
         session.current_datasource = next_datasource or session.current_datasource
         session.sqlbot_chat_id = _maybe_int(result.get("chat_id"))
@@ -1755,12 +1926,16 @@ class WorkspaceDashboardSkill:
         session.last_chart_kind = _coalesce(chart_plan.get("kind"))
         session.artifacts = {key: value for key, value in artifacts.items() if isinstance(value, str)}
         self._save_session(session)
+        tracer.stage_end("state.save")
+
+        tracer.stage_end("ask.finish", status=outcome["status"], error_kind=outcome.get("error_kind"))
 
         compact_payload = {
             "scope": self.context.to_dict(),
             "session": session.to_public_dict(),
             "summary": {
                 "status": outcome["status"],
+                "error_kind": outcome.get("error_kind"),
                 "brief": result.get("brief"),
                 "question": result.get("question", question),
                 "row_count": len(rows),
@@ -1778,6 +1953,7 @@ class WorkspaceDashboardSkill:
                 "chat_id": result.get("chat_id"),
                 "datasource": result.get("datasource"),
             },
+            "telemetry": tracer.build_telemetry(),
         }
         if include_raw:
             raw_payload = dict(result)
@@ -1865,6 +2041,8 @@ class WorkspaceDashboardSkill:
         rows: list[dict[str, Any]],
         result: dict[str, Any],
         chart_plan: dict[str, Any],
+        tracer: "_TraceEmitter | None" = None,
+        trace_id: str | None = None,
     ) -> dict[str, str | dict[str, Any] | None]:
         record_id = _maybe_int(result.get("record_id")) or 0
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -1872,8 +2050,12 @@ class WorkspaceDashboardSkill:
         artifact_dir = scope_dir / f"{timestamp}-record-{record_id or 'na'}"
         artifact_dir.mkdir(parents=True, exist_ok=True)
 
+        if tracer:
+            tracer.stage_start("artifact.write_raw")
         raw_path = artifact_dir / "raw-result.json"
         raw_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+        if tracer:
+            tracer.stage_end("artifact.write_raw")
 
         normalized_path = artifact_dir / "normalized.json"
         normalized_payload = {
@@ -1885,20 +2067,54 @@ class WorkspaceDashboardSkill:
         }
         normalized_path.write_text(json.dumps(normalized_payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        if tracer:
+            tracer.stage_start("artifact.write_csv")
         csv_path = None
         if fields and rows:
             csv_path = artifact_dir / "data.csv"
             _write_csv(csv_path, fields=fields, rows=rows)
+        if tracer:
+            tracer.stage_end("artifact.write_csv")
 
+        if tracer:
+            tracer.stage_start("artifact.render_chart")
         chart_path = None
         render_error = None
         if chart_plan.get("kind") not in {"empty", None}:
             chart_path = artifact_dir / "chart.png"
             try:
                 _render_chart_artifact(chart_path, chart_plan=chart_plan)
+                if tracer:
+                    tracer.stage_end("artifact.render_chart")
             except Exception as exc:  # pragma: no cover - artifact failure should not break ask
                 render_error = str(exc)
                 chart_path = None
+                if tracer:
+                    tracer.stage_end("artifact.render_chart", status="error", error_kind="artifact_error", error_message=render_error)
+        else:
+            if tracer:
+                tracer.stage_end("artifact.render_chart")
+
+        datasource_info = result.get("datasource")
+        manifest = {
+            "trace_id": trace_id,
+            "session_id": self.context.session_id,
+            "session_key": self.context.session_key,
+            "question": question,
+            "workspace": datasource_info.get("workspace") if isinstance(datasource_info, dict) else None,
+            "datasource": datasource_info.get("name") if isinstance(datasource_info, dict) else None,
+            "chat_id": _maybe_int(result.get("chat_id")),
+            "record_id": _maybe_int(result.get("record_id")),
+            "artifact_files": {
+                "raw_json": "raw-result.json",
+                "normalized_json": "normalized.json",
+                "data_csv": "data.csv" if csv_path else None,
+                "chart_png": "chart.png" if chart_path else None,
+            },
+            "created_at": _now_iso(),
+        }
+        manifest_path = artifact_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
 
         artifacts: dict[str, str | dict[str, Any] | None] = {
             "directory": str(artifact_dir),
@@ -1907,6 +2123,7 @@ class WorkspaceDashboardSkill:
             "data_csv": str(csv_path) if csv_path else None,
             "chart_png": str(chart_path) if chart_path else None,
             "chart_plan": chart_plan,
+            "manifest_json": str(manifest_path),
         }
         if render_error:
             artifacts["render_error"] = render_error
@@ -1938,6 +2155,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Signed API key token TTL in seconds.",
+    )
+    parser.add_argument("--trace-id", default=None, help="Trace ID for this invocation. Auto-generated if omitted when --emit-trace is set.")
+    parser.add_argument("--trace-file", default=None, help="Path to append structured trace events (JSONL). Overrides --emit-trace target.")
+    parser.add_argument(
+        "--emit-trace",
+        action="store_true",
+        help=f"Emit structured trace events to {DEFAULT_TRACE_EVENT_FILE}.",
     )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -2015,6 +2239,9 @@ def main(argv: list[str] | None = None) -> int:
             openclaw_session_id=args.openclaw_session_id,
             openclaw_agent_id=args.openclaw_agent_id,
             allow_default_scope=args.allow_default_scope,
+            trace_id=args.trace_id,
+            trace_file=args.trace_file,
+            emit_trace=args.emit_trace,
         )
         if args.command == "workspace":
             return _run_workspace(skill, args)

@@ -165,14 +165,21 @@ python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
 - `scope`: OpenClaw session binding used by the skill
 - `session`: current bound workspace, datasource, SQLBot `chat_id`, last record id
 - `summary`: compact answer metadata, preview rows, SQL excerpt, chart kind
+  - `summary.status`: `ok` / `empty` / `error`
+  - `summary.error_kind`: machine-readable error class (`auth_error`, `config_error`, `network_error`, `sql_execution_error`, `timeout`, `sqlbot_api_error`, `empty_result`, or `null` for ok)
+  - `summary.error_reason`: human-readable error summary
+  - `summary.user_hint`: suggested next action for the user
 - `artifacts`:
   - `chart_png`
   - `data_csv`
   - `raw_json`
   - `normalized_json`
+  - `manifest_json`: trace linkage, session info, artifact file index
 - `source`: SQLBot record id, datasource, chat id
+- `telemetry`: trace ID, started/finished timestamps, total duration, per-stage duration breakdown
 
 Do not dump the raw JSON back to the user unless they ask for it. Read the compact fields and summarize the result.
+Do not expose `telemetry` or `artifacts` paths to end users in normal operation.
 
 ## Execution rules
 
@@ -192,14 +199,19 @@ Do not dump the raw JSON back to the user unless they ask for it. Read the compa
 - After `ask`, read `summary.status` first:
   - `ok`: summarize the result normally
   - `empty`: tell the user the query executed successfully but no matching data was returned
-  - `error`: return the brief reason from `summary.error_reason` and the usage hint from `summary.user_hint`
-- Never describe `summary.status = error` as “没有查询到数据”.
+  - `error`: return the brief reason from `summary.error_reason` and the usage hint from `summary.user_hint`. Use `summary.error_kind` for programmatic routing — do not guess error type from human-readable text.
+- Never describe `summary.status = error` as "没有查询到数据".
 - For manual shell runs outside OpenClaw, you may pass:
   - `--openclaw-session-key`
   - `--openclaw-session-id`
   - `--openclaw-agent-id`
   - `--allow-default-scope`
   These are mainly for testing and explicit session routing.
+- To enable structured trace emission (writes JSONL to `monitoring/sqlbot-events.jsonl` in the skill directory):
+  - `--emit-trace`: enable tracing with auto-generated trace ID
+  - `--trace-id <id>`: override trace ID
+  - `--trace-file <path>`: write trace events to a custom file path
+  These flags are optional and intended for observability. Do not require them for normal production use.
 
 ## Additional resources
 

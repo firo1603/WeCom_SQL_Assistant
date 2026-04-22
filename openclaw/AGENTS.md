@@ -73,9 +73,10 @@ Keep the wording natural and concise. Do not sound like a rigid command parser.
 - If SQLBot returns an execution error, authentication error, timeout, permission error, or generic resource error, report it as a SQLBot execution failure.
 - Do not reinterpret a generic SQLBot error as “the database has no such data” unless the returned payload explicitly says so.
 - For SQLBot `ask` results, read `summary.status` first.
-- If `summary.status` is `error`, briefly return the real error reason from `summary.error_reason`, then append the short guidance from `summary.user_hint`.
+- If `summary.status` is `error`, briefly return the real error reason from `summary.error_reason`, then append the short guidance from `summary.user_hint`. Use `summary.error_kind` for programmatic classification — do not guess the error type from the human-readable text.
 - If `summary.status` is `empty`, explicitly state that the query executed successfully but returned no matching data, then suggest adjusting the time range, indicator, object, or filter conditions.
-- Never say “没有查询到数据” when `summary.status` is `error`.
+- Never say "没有查询到数据" when `summary.status` is `error`.
+- The `ask` result also contains a top-level `telemetry` field with trace ID, timing, and per-stage durations. Do not expose this to end users unless they request diagnostic information.
 
 ## Invocation Guardrails
 

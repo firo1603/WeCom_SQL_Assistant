@@ -1,6 +1,6 @@
 # Corp Assistant 与 SQLBot Skill 工作流程
 
-更新时间：2026-04-21  
+更新时间：2026-04-22  
 维护位置：`/root/.openclaw/workspace/memory/corp-assistant-sqlbot-workflow.md`  
 适用对象：`corp-assistant` 生产 agent、`sqlbot-workspace-dashboard` skill、WeCom 入口路由
 
@@ -372,6 +372,7 @@ artifacts/
       normalized.json
       data.csv
       chart.png
+      manifest.json        # trace linkage, session info, artifact file index
 ```
 
 compact payload 字段：
@@ -381,17 +382,19 @@ compact payload 字段：
 | `scope` | 当前 OpenClaw session 绑定信息 |
 | `session` | 当前 workspace、datasource、SQLBot chat、last record、artifact |
 | `summary.status` | `ok` / `empty` / `error` |
+| `summary.error_kind` | 机器可读错误分类：`auth_error` / `config_error` / `network_error` / `sql_execution_error` / `timeout` / `sqlbot_api_error` / `empty_result` / `null`（成功） |
 | `summary.brief` | SQLBot 返回的简短标题 |
 | `summary.row_count` | 结果行数 |
 | `summary.fields` | 字段列表 |
 | `summary.chart_kind` | 图表类型 |
 | `summary.summary_lines` | 面向用户的短摘要候选 |
-| `summary.error_reason` | 错误原因 |
+| `summary.error_reason` | 人类可读错误原因 |
 | `summary.user_hint` | 用户下一步提示 |
 | `summary.rows_preview` | 预览行 |
 | `summary.sql_excerpt` | SQL 摘要 |
-| `artifacts` | 本地文件路径 |
+| `artifacts` | 本地文件路径（raw_json / normalized_json / data_csv / chart_png / manifest_json） |
 | `source` | SQLBot record/chat/datasource 来源 |
+| `telemetry` | trace_id、started_at、finished_at、duration_ms、stage_durations_ms |
 
 ## 13. 错误处理流程
 
@@ -410,24 +413,95 @@ flowchart TD
 
 错误分类：
 
-| 原始信号 | 面向用户原因 |
-|---|---|
-| invalid api key / unauthorized / 401 | 认证失败 |
-| workspace not found | 工作空间不存在 |
-| datasource not found | 数据源不存在 |
-| resource not found | 未找到可用的数据资源 |
-| permission / forbidden / 权限 | 权限不足 |
-| timeout | 请求超时 |
-| connection / 连接 | 无法连接到问数服务 |
-| SQL error / SQL 失败 | SQL 执行失败 |
+| 原始信号 | `error_kind`（机器可读） | 面向用户原因 |
+|---|---|---|
+| invalid api key / unauthorized / 401 | `auth_error` | 认证失败 |
+| workspace not found / datasource not found | `config_error` | 工作空间或数据源不存在 |
+| permission / forbidden / 权限 | `auth_error` | 权限不足 |
+| timeout | `timeout` | 请求超时 |
+| connection / 连接 / failed to reach sqlbot | `network_error` | 无法连接到问数服务 |
+| SQL error / SQL 失败 | `sql_execution_error` | SQL 执行失败 |
+| 其他 SQLBot API 错误 | `sqlbot_api_error` | SQLBot 执行失败 |
+| 执行成功但无数据 | `empty_result` | 查询成功但无匹配数据 |
 
 重要原则：
 
 - `summary.status = error` 时，不能说“没有查询到数据”
 - 只有 `summary.status = empty` 时，才能说“查询执行成功但无匹配数据”
 - generic error 不能被改写成业务结论
-- 连接失败和认证失败属于系统/服务问题，不是业务数据为空
+- 连接失败和认证失败属于系统/服务问题，不是业务数据为空- `summary.error_kind` 是机器可读的稳定分类字段，应优先用于程序路由，不要依赖 `error_reason` 的文本去猜错误类型
 
+## 13.5. 可观测性与 Trace
+
+本次更新在 `sqlbot_skills.py` 中引入了结构化执行跟踪机制：
+
+**Trace 文件（可选启用）：**
+
+默认路径：`<skill 目录>/monitoring/sqlbot-events.jsonl`
+
+启用方式：
+
+```bash
+python3 sqlbot_skills.py --emit-trace ask "问题"
+```
+
+每次 `ask` 执行的关键阶段都会写入一条 JSONL 事件：
+
+```json
+{
+  "trace_id": "sqlbot:<session_id>:<timestamp>:<pid>",
+  "ts": "2026-04-22T10:00:00+08:00",
+  "stage": "question.stream",
+  "status": "ok",
+  "session_key": "agent:corp-assistant:wecom:...",
+  "session_id": "<uuid>",
+  "workspace": "默认工作空间",
+  "datasource": "水果通数据库",
+  "chat_id": 147,
+  "record_id": 372,
+  "duration_ms": 61000,
+  "error_kind": null,
+  "error_message": null
+}
+```
+
+**内置阶段（stage）列表：**
+
+| stage | 含义 |
+|---|---|
+| `session_context.resolve` | 解析 OpenClaw session |
+| `workspace.resolve` | 切换/解析 workspace |
+| `datasource.resolve` | 解析 datasource |
+| `question.stream` | 调用 SQLBot `/chat/question` |
+| `result.normalize` | 数据归一化 |
+| `chart.plan` | 选择图表方案 |
+| `artifact.write_raw` | 写 raw-result.json |
+| `artifact.write_csv` | 写 data.csv |
+| `artifact.render_chart` | 渲染 chart.png |
+| `state.save` | 保存 session state |
+| `ask.finish` | 整个 ask 完成 |
+
+**返回值中的 telemetry 字段：**
+
+```json
+{
+  "telemetry": {
+    "trace_id": "sqlbot:...",
+    "started_at": "2026-04-22T10:00:00+08:00",
+    "finished_at": "2026-04-22T10:01:05+08:00",
+    "duration_ms": 65000,
+    "stage_durations_ms": {
+      "question.stream": 61000,
+      "artifact.render_chart": 800,
+      "state.save": 12
+    }
+  }
+}
+```
+
+**Manifest 文件：**
+
+每次 ask 在 artifact 目录写 `manifest.json`，包含 trace_id、session 信息和各 artifact 文件清单，用于面板读取和关联。
 ## 14. 状态重置流程
 
 ```mermaid
@@ -529,7 +603,7 @@ python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-da
 | datasource 默认值 | `.env` 自动绑定 | 可改成按用户/群组/部门配置默认 datasource |
 | state store | JSON 文件 | 多实例部署时应迁移到 SQLite/Redis/Postgres |
 | artifacts | 本地文件系统 | 多实例或长期留存时应接对象存储和清理策略 |
-| error mapping | 简单字符串归类 | 可升级为结构化错误码 |
+| error mapping | 简单字符串归类，已升级为结构化 `error_kind` 字段 | 面板可直接读取 `error_kind`，无需字符串匹配 |
 | dashboard export | 本地渲染输出 | 可接权限校验和短链下载 |
 | 用户回复 | Agent 读 compact payload 后总结 | 可封装统一 responder，减少 prompt 漂移 |
 | 权限 | 主要依赖 WeCom 可见范围和 SQLBot 权限 | 可增加 OpenClaw 层用户/群组 allowlist |
