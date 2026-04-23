@@ -1912,6 +1912,8 @@ class WorkspaceDashboardSkill:
             rows=rows,
             result=result,
             chart_plan=chart_plan,
+            outcome=outcome,
+            sql=_coalesce(result.get("sql")),
             tracer=tracer,
             trace_id=trace_id,
         )
@@ -2041,6 +2043,8 @@ class WorkspaceDashboardSkill:
         rows: list[dict[str, Any]],
         result: dict[str, Any],
         chart_plan: dict[str, Any],
+        outcome: "dict | None" = None,
+        sql: str | None = None,
         tracer: "_TraceEmitter | None" = None,
         trace_id: str | None = None,
     ) -> dict[str, str | dict[str, Any] | None]:
@@ -2105,6 +2109,13 @@ class WorkspaceDashboardSkill:
             "datasource": datasource_info.get("name") if isinstance(datasource_info, dict) else None,
             "chat_id": _maybe_int(result.get("chat_id")),
             "record_id": _maybe_int(result.get("record_id")),
+            "status": outcome.get("status") if outcome else None,
+            "error_kind": outcome.get("error_kind") if outcome else None,
+            "error_reason": outcome.get("error_reason") if outcome else None,
+            "summary_lines": outcome.get("summary_lines") if outcome else None,
+            "sql": sql,
+            "row_count": len(rows),
+            "chart_kind": chart_plan.get("kind"),
             "artifact_files": {
                 "raw_json": "raw-result.json",
                 "normalized_json": "normalized.json",

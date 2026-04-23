@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Corp Assistant 监控面板</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+<script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  body { background: #f0f2f5; font-size: 14px; }
+  .navbar { background: #1a1a2e !important; }
+  .nav-tab { cursor: pointer; padding: 8px 16px; border-radius: 6px; color: #ccc; }
+  .nav-tab.active { background: #0d6efd; color: #fff; }
+  .stat-card { background: #fff; border-radius: 10px; padding: 18px 22px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+  .stat-num { font-size: 2rem; font-weight: 700; }
+  .stat-label { color: #888; font-size: 12px; margin-top: 2px; }
+  .badge-ok { background: #198754; color: #fff; }
+  .badge-empty { background: #6c757d; color: #fff; }
+  .badge-error { background: #dc3545; color: #fff; }
+  .badge-anomaly { background: #ffc107; color: #333; }
+  table th { background: #f8f9fa; font-weight: 600; white-space: nowrap; }
+  .waterfall-bar { height: 28px; border-radius: 4px; display: flex; align-items: center; padding: 0 6px; font-size: 11px; color: #fff; white-space: nowrap; overflow: hidden; }
+  .bar-ok { background: #198754; }
+  .bar-error { background: #dc3545; }
+  .bar-skip { background: #adb5bd; }
+  .bar-warn { background: #fd7e14; }
+  .filter-row { gap: 8px; }
+  .section { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.07); }
+  .clickable-row { cursor: pointer; }
+  .clickable-row:hover td { background: #f0f8ff !important; }
+  .detail-panel { background: #f8f9fa; border-radius: 8px; padding: 16px; }
+  .health-dot { width: 14px; height: 14px; border-radius: 50%; display: inline-block; margin-right: 6px; }
+  .dot-ok { background: #198754; }
+  .dot-err { background: #dc3545; }
+  .conv-row td { vertical-align: top; }
+  .conv-expand { background: #f8f9fa; }
+  .sql-block { font-family: monospace; font-size: 12px; white-space: pre-wrap; background: #1e1e2e; color: #cdd6f4; border-radius: 6px; padding: 12px; max-height: 320px; overflow-y: auto; }
+  .summary-block { font-size: 13px; line-height: 1.7; }
+</style>
+</head>
+<body>
+
+<nav class="navbar navbar-dark px-4 py-2 d-flex align-items-center justify-content-between">
+  <span class="text-white fw-bold">Corp Assistant 监控面板</span>
+  <div class="d-flex gap-2 align-items-center" x-data>
+    <span class="text-white-50 small" id="last-refresh"></span>
+    <button id="auto-refresh-btn" class="btn btn-sm btn-outline-light py-0"
+            onclick="window._arOn=!window._arOn; this.textContent=window._arOn?'自动刷新 ON':'自动刷新 OFF'; this.className='btn btn-sm py-0 '+(window._arOn?'btn-outline-light':'btn-outline-secondary');"
+            title="点击暂停/恢复自动刷新">自动刷新 ON</button>
+    <form method="post" action="/logout" class="m-0">
+      <button class="btn btn-sm btn-outline-light">退出</button>
+    </form>
+  </div>
+</nav>
+
+<div x-data="app()" x-init="init()" class="container-fluid py-4 px-4">
+
+  <!-- Tab bar -->
+  <div class="d-flex gap-1 mb-4 flex-wrap">
+    <template x-for="t in tabs" :key="t.id">
+      <div class="nav-tab" :class="{active: tab===t.id}" @click="tab=t.id; loadTab(t.id)" x-text="t.label"></div>
+    </template>
+  </div>
+
+  <!-- ① 总览 -->
+  <div x-show="tab==='overview'">
+    <div class="row g-3 mb-4">
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="stat-num text-primary" x-text="ov.total ?? '—'"></div>
+          <div class="stat-label">今日请求总数</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="stat-num text-success" x-text="ov.success_rate != null ? ov.success_rate + '%' : '—'"></div>
+          <div class="stat-label">成功率</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="stat-num" x-text="ov.avg_ms != null ? ov.avg_ms + ' ms' : '—'"></div>
+          <div class="stat-label">平均耗时</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="stat-num" x-text="ov.p95_ms != null ? ov.p95_ms + ' ms' : '—'"></div>
+          <div class="stat-label">P95 耗时</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="stat-num text-danger" x-text="ov.errors ?? '—'"></div>
+          <div class="stat-label">今日错误数</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="stat-num text-secondary" x-text="ov.empty ?? '—'"></div>
+          <div class="stat-label">今日空结果数</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="stat-card">
+          <div class="stat-num" x-text="ov.active_sessions ?? '—'"></div>
+          <div class="stat-label">今日活跃 Session</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h6 class="fw-bold mb-3">最近错误</h6>
+      <div x-show="!ov.recent_errors || ov.recent_errors.length === 0" class="text-muted">今日暂无错误</div>
+      <table x-show="ov.recent_errors && ov.recent_errors.length > 0" class="table table-sm table-hover mb-0">
+        <thead><tr><th>时间</th><th>Trace ID</th><th>错误类型</th><th>Session</th></tr></thead>
+        <tbody>
+          <template x-for="e in ov.recent_errors" :key="e.trace_id">
+            <tr class="clickable-row" @click="openTrace(e.trace_id)">
+              <td x-text="fmtTs(e.ts)"></td>
+              <td><code x-text="e.trace_id ? e.trace_id.slice(0,20)+'…' : '—'"></code></td>
+              <td><span class="badge badge-error" x-text="e.error_kind || 'error'"></span></td>
+              <td :title="e.session_key" x-text="fmtUserFromKey(e.session_key)"></td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ② 对话历史 -->
+  <div x-show="tab==='conv'">
+    <!-- 用户别名配置面板 -->
+    <div class="section mb-2 pb-2">
+      <div class="d-flex align-items-center gap-2 mb-2">
+        <span class="small fw-semibold">⚙️ 用户别名配置</span>
+        <button class="btn btn-sm btn-outline-secondary py-0 px-2" @click="showAliasConfig=!showAliasConfig"
+                x-text="showAliasConfig?'收起':'展开'"></button>
+        <span class="text-muted small" x-show="Object.keys(userAliases).length>0"
+              x-text="'已配置 '+Object.keys(userAliases).length+' 个'"></span>
+      </div>
+      <div x-show="showAliasConfig">
+        <p class="text-muted small mb-2">将用户短名（session_key 中 direct: 后的部分）映射为可读姓名，配置保存在服务器，所有登录用户共享。</p>
+        <div class="d-flex gap-2 mb-2" style="max-width:480px">
+          <input type="text" class="form-control form-control-sm" placeholder="短名，如 lingxiaodong"
+                 x-model="aliasInput.key" @keydown.enter="addAlias()">
+          <input type="text" class="form-control form-control-sm" placeholder="显示名，如 凌晓冬"
+                 x-model="aliasInput.val" @keydown.enter="addAlias()">
+          <button class="btn btn-sm btn-primary" @click="addAlias()">添加</button>
+        </div>
+        <div x-show="Object.keys(userAliases).length===0" class="text-muted small">暂无别名配置</div>
+        <table x-show="Object.keys(userAliases).length>0" class="table table-sm mb-0" style="max-width:480px">
+          <thead><tr><th>短名</th><th>显示名</th><th></th></tr></thead>
+          <tbody>
+            <template x-for="[k, v] in Object.entries(userAliases)" :key="k">
+              <tr>
+                <td><code x-text="k"></code></td>
+                <td x-text="v"></td>
+                <td><button class="btn btn-sm btn-outline-danger py-0 px-1" @click="removeAlias(k)">×</button></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="section mb-3">
+      <!-- 筛选行 -->
+      <div class="d-flex flex-wrap filter-row align-items-end mb-3">
+        <div>
+          <label class="form-label mb-1 small">状态</label>
+          <select class="form-select form-select-sm" x-model="convFilter.status" @change="loadConvs()">
+            <option value="">全部</option>
+            <option value="ok">ok</option>
+            <option value="empty">empty</option>
+            <option value="error">error</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label mb-1 small">日期</label>
+          <input type="date" class="form-control form-control-sm" x-model="convFilter.date" @change="loadConvs()">
+        </div>
+        <div style="min-width:140px">
+          <label class="form-label mb-1 small">用户</label>
+          <input type="text" class="form-control form-control-sm" placeholder="名字或 session key" x-model="convFilter.user" @input.debounce.400ms="loadConvs()">
+        </div>
+        <div style="min-width:140px">
+          <label class="form-label mb-1 small">数据源</label>
+          <input type="text" class="form-control form-control-sm" placeholder="部分匹配" x-model="convFilter.datasource" @input.debounce.400ms="loadConvs()">
+        </div>
+        <div style="flex:1; min-width:180px">
+          <label class="form-label mb-1 small">问题关键字</label>
+          <input type="text" class="form-control form-control-sm" placeholder="部分匹配" x-model="convFilter.q" @input.debounce.400ms="loadConvs()">
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" @click="convFilter={};loadConvs()">重置</button>
+        <button class="btn btn-sm btn-outline-secondary" @click="loadConvs()">刷新</button>
+      </div>
+      <div class="text-muted small mb-2" x-text="'共 '+convs.length+' 条记录'"></div>
+      <div x-show="convs.length===0" class="text-muted py-3 text-center">
+        暂无记录 —— 需等待 ask 命令执行并生成产物后才能显示
+      </div>
+      <div x-show="convs.length>0">
+        <template x-for="(c, idx) in convs" :key="idx">
+          <div class="border rounded mb-2" :class="c.status==='error'?'border-danger-subtle':''">
+            <!-- 摘要行（可点击展开） -->
+            <div class="d-flex align-items-start gap-2 p-3 clickable-row"
+                 @click="convExpanded===idx ? convExpanded=null : convExpanded=idx"
+                 style="cursor:pointer">
+              <div style="flex:1; min-width:0">
+                <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+                  <span class="text-muted small" style="white-space:nowrap" x-text="fmtTs(c.created_at)"></span>
+                  <!-- 用户显示名（优先别名，其次 user_short，再 session_key 末尾） -->
+                  <span class="badge bg-primary fw-normal"
+                        x-text="fmtUser(c)"
+                        :title="c.session_key"></span>
+                  <span x-show="c.workspace" class="badge bg-secondary fw-normal" x-text="c.workspace"></span>
+                  <span x-show="c.datasource" class="badge bg-light text-dark border fw-normal" x-text="c.datasource"></span>
+                </div>
+                <div class="fw-semibold text-break" x-text="c.question||'（无提问记录）'"></div>
+              </div>
+              <div class="d-flex flex-column align-items-end gap-1 ms-2" style="white-space:nowrap">
+                <span class="badge"
+                  :class="c.status==='ok'?'badge-ok':(c.status==='error'?'badge-error':'badge-empty')"
+                  x-text="c.error_kind||c.status||'—'"></span>
+                <span class="text-muted small" x-show="c.row_count!=null" x-text="c.row_count+' 行'"></span>
+              </div>
+              <span class="text-muted ms-1" x-text="convExpanded===idx?'▲':'▼'" style="font-size:11px"></span>
+            </div>
+            <!-- 展开内容 -->
+            <div x-show="convExpanded===idx" class="border-top px-3 pb-3 pt-2">
+              <div class="row g-3">
+                <div class="col-12">
+                  <span class="text-muted small">用户短名：</span>
+                  <code class="small" x-text="c.user_short||'—'"></code>
+                  <span class="text-muted small ms-3">Session Key：</span>
+                  <code class="small" x-text="c.session_key||'—'"></code>
+                </div>
+                <div x-show="c.sql" class="col-12">
+                  <div class="fw-semibold small mb-1 text-muted">🗄️ 执行 SQL</div>
+                  <div class="sql-block" x-text="c.sql"></div>
+                </div>
+                <div x-show="!c.sql" class="col-12">
+                  <div class="text-muted small">（此记录未保存 SQL，新查询将自动记录）</div>
+                </div>
+                <div class="col-12">
+                  <div class="fw-semibold small mb-1 text-muted">💬 返回摘要</div>
+                  <div x-show="c.summary_lines && c.summary_lines.length" class="summary-block">
+                    <template x-for="(line, li) in (c.summary_lines||[])" :key="li">
+                      <div x-text="line"></div>
+                    </template>
+                  </div>
+                  <div x-show="!c.summary_lines || !c.summary_lines.length">
+                    <span x-show="c.error_reason" class="text-danger small" x-text="c.error_reason"></span>
+                    <span x-show="!c.error_reason" class="text-muted small">（此记录未保存摘要）</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- ③ 请求追踪 -->
+
+  <div x-show="tab==='traces'">
+    <div class="section mb-3">
+      <div class="d-flex flex-wrap filter-row align-items-end mb-3">
+        <div>
+          <label class="form-label mb-1 small">状态</label>
+          <select class="form-select form-select-sm" x-model="traceFilter.status" @change="loadTraces()">
+            <option value="">全部</option>
+            <option value="ok">ok</option>
+            <option value="empty">empty</option>
+            <option value="error">error</option>
+          </select>
+        </div>
+        <div>
+          <label class="form-label mb-1 small">日期</label>
+          <input type="date" class="form-control form-control-sm" x-model="traceFilter.date" @change="loadTraces()">
+        </div>
+        <div style="flex:1; min-width:160px">
+          <label class="form-label mb-1 small">Session Key</label>
+          <input type="text" class="form-control form-control-sm" placeholder="部分匹配" x-model="traceFilter.session" @input.debounce.400ms="loadTraces()">
+        </div>
+        <button class="btn btn-sm btn-outline-secondary" @click="traceFilter={};loadTraces()">重置</button>
+      </div>
+
+      <div x-show="traces.length===0" class="text-muted">暂无数据</div>
+      <div class="table-responsive" x-show="traces.length>0">
+        <table class="table table-sm table-hover mb-0">
+          <thead>
+            <tr>
+              <th>时间</th><th>状态</th><th>耗时</th>
+              <th>Workspace</th><th>Datasource</th>
+              <th>Chat ID</th><th>Record ID</th>
+              <th>用户</th><th>Trace ID</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="t in traces" :key="t.trace_id">
+              <tr class="clickable-row" @click="openTrace(t.trace_id)">
+                <td x-text="fmtTs(t.ts)"></td>
+                <td>
+                  <span class="badge"
+                    :class="t.status==='ok'?'badge-ok':(t.status==='error'?'badge-error':'badge-empty')"
+                    x-text="t.error_kind||t.status"></span>
+                </td>
+                <td x-text="fmtMs(t.duration_ms)"></td>
+                <td x-text="t.workspace||'—'"></td>
+                <td x-text="t.datasource||'—'"></td>
+                <td x-text="t.chat_id??'—'"></td>
+                <td x-text="t.record_id??'—'"></td>
+                <td :title="t.session_key" x-text="fmtUserFromKey(t.session_key)"></td>
+                <td><code x-text="(t.trace_id||'').slice(0,18)+'…'"></code></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Trace detail panel -->
+    <div x-show="traceDetail" class="section">
+      <div class="d-flex justify-content-between align-items-center mb-3">
+        <h6 class="fw-bold mb-0">请求详情</h6>
+        <button class="btn btn-sm btn-outline-secondary" @click="traceDetail=null">关闭</button>
+      </div>
+      <template x-if="traceDetail">
+        <div>
+          <div class="row g-2 mb-3">
+            <div class="col-md-3"><span class="text-muted">Trace ID</span><br><code x-text="traceDetail.trace_id"></code></div>
+            <div class="col-md-2"><span class="text-muted">状态</span><br>
+              <span class="badge" :class="traceDetail.status==='ok'?'badge-ok':'badge-error'" x-text="traceDetail.error_kind||traceDetail.status"></span>
+            </div>
+            <div class="col-md-2"><span class="text-muted">总耗时</span><br><strong x-text="fmtMs(traceDetail.duration_ms)"></strong></div>
+            <div class="col-md-2"><span class="text-muted">用户</span><br><span x-text="fmtUserFromKey(traceDetail.session_key)" :title="traceDetail.session_key"></span></div>
+            <div class="col-md-3"><span class="text-muted">Chat / Record</span><br><code x-text="(traceDetail.chat_id??'—')+'\u00a0/\u00a0'+(traceDetail.record_id??'—')"></code></div>
+            <div class="col-md-2"><span class="text-muted">Datasource</span><br><span x-text="traceDetail.datasource||'—'"></span></div>
+          </div>
+          <template x-if="traceDetail.error_message">
+            <div class="alert alert-danger py-2 small" x-text="traceDetail.error_message"></div>
+          </template>
+
+          <!-- Waterfall -->
+          <h6 class="small text-muted mb-2">执行瀑布图</h6>
+          <div class="detail-panel">
+            <template x-for="s in traceDetail.stages" :key="s.stage">
+              <div class="d-flex align-items-center mb-1" style="gap:8px">
+                <div style="width:180px; text-align:right; font-size:12px; color:#555" x-text="s.stage"></div>
+                <div style="flex:1; position:relative; height:28px">
+                  <template x-if="s.start_rel_ms != null && s.end_rel_ms != null && traceDetail.duration_ms > 0">
+                    <div class="waterfall-bar"
+                      :class="s.status==='ok'?'bar-ok':(s.status==='error'?'bar-error':'bar-skip')"
+                      :style="`margin-left:${(s.start_rel_ms/traceDetail.duration_ms*100).toFixed(1)}%; width:${Math.max(((s.end_rel_ms-s.start_rel_ms)/traceDetail.duration_ms*100),1).toFixed(1)}%; position:absolute; top:0`"
+                      x-text="s.duration_ms+'ms'">
+                    </div>
+                  </template>
+                  <template x-if="s.start_rel_ms == null">
+                    <div class="waterfall-bar bar-skip" style="width:4%; position:absolute; top:0" x-text="s.duration_ms?s.duration_ms+'ms':''"></div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- ③ Session 视图 -->
+  <div x-show="tab==='sessions'">
+    <div class="section">
+      <h6 class="fw-bold mb-3">Session 状态</h6>
+      <div x-show="sessions.length===0" class="text-muted">暂无数据</div>
+      <div class="table-responsive" x-show="sessions.length>0">
+        <table class="table table-sm table-hover mb-0">
+          <thead>
+            <tr><th>Scope Key</th><th>Workspace</th><th>Datasource</th><th>Chat ID</th><th>Record ID</th><th>最近问题</th><th>更新时间</th><th>异常</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="s in sessions" :key="s.scope_key">
+              <tr :class="s.anomalies.length>0?'table-warning':''">
+                <td><code x-text="s.scope_key.slice(0,20)"></code></td>
+                <td x-text="s.workspace||'—'"></td>
+                <td x-text="s.datasource||'—'"></td>
+                <td x-text="s.chat_id??'—'"></td>
+                <td x-text="s.record_id??'—'"></td>
+                <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" x-text="s.last_question||'—'"></td>
+                <td x-text="fmtTs(s.updated_at)"></td>
+                <td>
+                  <template x-for="a in s.anomalies" :key="a">
+                    <span class="badge badge-anomaly me-1" x-text="a"></span>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ④ SQLBot 健康 -->
+  <div x-show="tab==='health'">
+    <div class="section" style="max-width:500px">
+      <h6 class="fw-bold mb-3">SQLBot 连接状态</h6>
+      <div x-show="!health" class="text-muted">加载中…</div>
+      <template x-if="health">
+        <div>
+          <div class="mb-3 d-flex align-items-center">
+            <span class="health-dot" :class="health.reachable?'dot-ok':'dot-err'"></span>
+            <span x-text="health.reachable?'可达':'不可达'" class="fw-bold me-2"></span>
+            <span class="text-muted small" x-text="health.base_url||'未配置'"></span>
+          </div>
+          <div x-show="health.status_code" class="small text-muted mb-1">HTTP 状态码: <code x-text="health.status_code"></code></div>
+          <div x-show="health.error" class="alert alert-danger py-2 small" x-text="health.error"></div>
+          <button class="btn btn-sm btn-outline-primary mt-2" @click="loadHealth()">重新探活</button>
+        </div>
+      </template>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+function app() {
+  return {
+    tab: 'overview',
+    tabs: [
+      {id:'overview',  label:'📊 总览'},
+      {id:'conv',      label:'💬 对话历史'},
+      {id:'traces',    label:'🔍 请求追踪'},
+      {id:'sessions',  label:'👤 Session'},
+      {id:'health',    label:'🟢 SQLBot 健康'},
+    ],
+    ov: {},
+    traces: [],
+    traceDetail: null,
+    traceFilter: {},
+    sessions: [],
+    health: null,
+    convs: [],
+    convExpanded: null,
+    convFilter: {},
+    userAliases: {},
+    showAliasConfig: false,
+    aliasInput: {key: '', val: ''},
+
+    async init() {
+      window._arOn = true;
+      await this.loadOverview();
+      await this.loadAliases();
+      setInterval(() => {
+        if (!window._arOn) return;
+        this.autoRefresh();
+      }, 10000);
+    },
+
+    async autoRefresh() {
+      document.getElementById('last-refresh').textContent = '刷新于 ' + new Date().toLocaleTimeString('zh-CN');
+      if (this.tab === 'overview') await this.loadOverview();
+      else if (this.tab === 'conv') await this.loadConvs();
+      else if (this.tab === 'traces') await this.loadTraces();
+      else if (this.tab === 'sessions') await this.loadSessions();
+    },
+
+    async loadAliases() {
+      const r = await this._get('/api/aliases');
+      if (r) this.userAliases = r;
+    },
+
+    async addAlias() {
+      const k = (this.aliasInput.key || '').trim();
+      const v = (this.aliasInput.val || '').trim();
+      if (!k || !v) return;
+      const r = await fetch('/api/aliases', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({key: k, name: v}),
+      });
+      if (r.ok) { this.userAliases = await r.json(); this.aliasInput = {key: '', val: ''}; }
+    },
+
+    async removeAlias(k) {
+      const r = await fetch('/api/aliases/' + encodeURIComponent(k), {method: 'DELETE'});
+      if (r.ok) this.userAliases = await r.json();
+    },
+
+    async loadTab(id) {
+      if (id === 'overview') await this.loadOverview();
+      else if (id === 'conv') await this.loadConvs();
+      else if (id === 'traces') await this.loadTraces();
+      else if (id === 'sessions') await this.loadSessions();
+      else if (id === 'health') await this.loadHealth();
+    },
+
+    async loadConvs() {
+      const p = new URLSearchParams();
+      if (this.convFilter.status)     p.set('status',     this.convFilter.status);
+      if (this.convFilter.date)       p.set('date',       this.convFilter.date);
+      if (this.convFilter.user)       p.set('user',       this.convFilter.user);
+      if (this.convFilter.datasource) p.set('datasource', this.convFilter.datasource);
+      if (this.convFilter.q)          p.set('q',          this.convFilter.q);
+      const r = await this._get('/api/conversations?' + p.toString());
+      if (r) { this.convs = r; this.convExpanded = null; }
+    },
+
+    toggleConv(idx) {
+      this.convExpanded = this.convExpanded === idx ? null : idx;
+    },
+
+    async loadOverview() {
+      const r = await this._get('/api/overview');
+      if (r) this.ov = r;
+    },
+
+    async loadTraces() {
+      const p = new URLSearchParams();
+      if (this.traceFilter.status) p.set('status', this.traceFilter.status);
+      if (this.traceFilter.date)   p.set('date',   this.traceFilter.date);
+      if (this.traceFilter.session) p.set('session', this.traceFilter.session);
+      const r = await this._get('/api/traces?' + p.toString());
+      if (r) this.traces = r;
+    },
+
+    async openTrace(traceId) {
+      this.tab = 'traces';
+      const r = await this._get('/api/traces/' + encodeURIComponent(traceId));
+      if (r) this.traceDetail = r;
+    },
+
+    async loadSessions() {
+      const r = await this._get('/api/sessions');
+      if (r) this.sessions = r;
+    },
+
+    async loadHealth() {
+      this.health = null;
+      const r = await this._get('/api/sqlbot/health');
+      if (r) this.health = r;
+    },
+
+    async _get(url) {
+      try {
+        const resp = await fetch(url, {credentials: 'same-origin'});
+        if (resp.status === 401) { location.href = '/login'; return null; }
+        if (!resp.ok) return null;
+        return await resp.json();
+      } catch(e) { return null; }
+    },
+
+    fmtTs(ts) {
+      if (!ts) return '—';
+      try {
+        const d = new Date(ts);
+        return d.toLocaleString('zh-CN', {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      } catch { return ts; }
+    },
+
+    fmtMs(ms) {
+      if (ms == null) return '—';
+      if (ms < 1000) return ms + ' ms';
+      const s = Math.floor(ms / 1000);
+      const m = Math.floor(s / 60);
+      const rs = s % 60;
+      if (m === 0) return rs + ' 秒';
+      return m + ' 分 ' + rs + ' 秒';
+    },
+
+    fmtUser(c) {
+      const short = c.user_short || c.session_key || '';
+      return this.userAliases[short] || short || '—';
+    },
+
+    fmtUser(c) {
+      // user_display comes from server (already resolved via aliases)
+      return c.user_display || c.user_short || '—';
+    },
+
+    fmtUserFromKey(sk) {
+      // for trace rows: extract short name from session_key, then apply local alias map
+      if (!sk) return '—';
+      let short = sk;
+      if (sk.includes('direct:')) short = sk.split('direct:').pop().trim();
+      else if (sk.includes(':')) short = sk.split(':').pop().trim();
+      return this.userAliases[short] || short || '—';
+    },
+
+    addAlias() {
+      const k = (this.aliasInput.key || '').trim();
+      const v = (this.aliasInput.val || '').trim();
+      if (k && v) {
+        this.userAliases = {...this.userAliases, [k]: v};
+        localStorage.setItem('userAliases', JSON.stringify(this.userAliases));
+        this.aliasInput = {key: '', val: ''};
+      }
+    },
+
+    removeAlias(k) {
+      const copy = {...this.userAliases};
+      delete copy[k];
+      this.userAliases = copy;
+      localStorage.setItem('userAliases', JSON.stringify(this.userAliases));
+    },
+  };
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,22 @@
+[server]
+host       = "0.0.0.0"
+port       = 8765
+secret_key = ""          # auto-generated on first run, do not edit manually
+
+[data]
+trace_file    = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/monitoring/sqlbot-events.jsonl"
+state_file    = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/.sqlbot-skill-state.json"
+artifacts_dir = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/artifacts/"
+sessions_dir  = "/root/.openclaw/agents/corp-assistant/sessions/"
+skill_env     = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/.env"
+tail_lines    = 5000
+
+[sqlbot]
+health_timeout = 5
+
+# 用户显示名配置（将 session_key 映射到可读名称）
+# 格式： session_key = "显示名"
+# session_key 在企业微信场景通常为用户 userid，可在对话历史页面的用户列查看
+[user_aliases]
+# 示例（取消注释并填入实际 session_key）：
+# "wxxxxxxxxxxxxxxxxx" = "张三"

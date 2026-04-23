@@ -1,0 +1,16 @@
+[Unit]
+Description=Corp Assistant Monitor
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/corp-assistant-monitor
+ExecStart=/opt/corp-assistant-monitor/venv/bin/uvicorn app:app --host 0.0.0.0 --port 8765
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
