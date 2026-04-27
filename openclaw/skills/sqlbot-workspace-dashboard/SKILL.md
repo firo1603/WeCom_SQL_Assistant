@@ -7,9 +7,24 @@ allowed-tools: Bash(python3 *), Read, Glob, Grep
 
 # SQLBot Session Workflow Skill
 
-Use this skill when the user wants to ask natural-language data questions against SQLBot, continue a follow-up question in the same chat, switch the SQLBot datasource bound to the current OpenClaw session, or export a dashboard.
+Use this skill when the user asks any concrete question or request in `corp-assistant`, continues a follow-up question in the same chat, switches the SQLBot datasource bound to the current OpenClaw session, or exports a dashboard.
 
-This skill wraps `${CLAUDE_SKILL_DIR}/sqlbot_skills.py`.
+In `corp-assistant`, this skill is the default execution path. Pure greetings, capability introductions, and help/scope explanations may be answered directly, but every other concrete user request should be routed to SQLBot first. Do not maintain a whitelist of topics; current working examples such as freight forwarding document volume, inspection rate, commodity tax-rate information, agency agreements, and single-ticket lookup are non-exhaustive.
+
+This skill wraps `/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py`.
+
+## OpenClaw exec preflight requirements
+
+OpenClaw exec accepts this skill only when it is invoked as a direct interpreter command:
+
+```bash
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" ask "<question>"
+```
+
+- The command must be one direct `python3 <absolute .py path> ...` command.
+- Do not use `cd`, `&&`, `;`, pipes, shell wrappers, shell variables, command substitution, heredocs, `python -c`, `python -m`, relative script paths, or multi-command retries.
+- Do not drop or rewrite the session key. Use `details.sessionKey` exactly, including the `agent:` prefix.
+- If exec reports `complex interpreter invocation detected`, retry once with the direct absolute-path form above.
 
 ## Before running
 
@@ -23,9 +38,10 @@ This skill wraps `${CLAUDE_SKILL_DIR}/sqlbot_skills.py`.
 ## Default workflow
 
 - Treat `ask` as the main path.
-- For production `corp-assistant`, use this skill by default for natural-language business/data questions and analytical follow-ups.
+- For production `corp-assistant`, use this skill by default for every concrete non-greeting request and analytical follow-up.
+- Do not screen requests by topic before invoking SQLBot. If the user asks a concrete question, call `ask` first and let SQLBot determine whether the datasource can answer.
 - No `查询` prefix is required.
-- If the current message is only a greeting, a capability question, a help request, or a clearly non-data request, do not invoke this skill.
+- If the current message is only a greeting, a capability question, a help request, or opening chat with no concrete task, do not invoke this skill.
 - One OpenClaw session maps to one SQLBot ask-data chat.
 - For production `corp-assistant`, always call the OpenClaw `session_status` tool first and read `details.sessionKey`.
 - For production `corp-assistant`, every session-scoped `sqlbot_skills.py` command must include:
@@ -47,115 +63,79 @@ This skill wraps `${CLAUDE_SKILL_DIR}/sqlbot_skills.py`.
 - Show current SQLBot binding for this OpenClaw session:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  session show
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" session show
 ```
 
 - Reset the SQLBot chat binding for this OpenClaw session:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  session reset
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" session reset
 ```
 
 - Fully clear workspace and datasource too:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  session reset --full
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" session reset --full
 ```
 
 - List workspaces:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" workspace list
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py workspace list
 ```
 
 - Bind workspace for the current OpenClaw session:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  workspace switch "<workspace>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" workspace switch "<workspace>"
 ```
 
 - List datasources:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  datasource list --workspace "<workspace>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" datasource list --workspace "<workspace>"
 ```
 
 - Bind datasource for the current OpenClaw session:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  datasource switch "<datasource>" --workspace "<workspace>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" datasource switch "<datasource>" --workspace "<workspace>"
 ```
 
 - First ask with explicit datasource:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  ask "<question>" --datasource "<datasource>" --workspace "<workspace>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" ask "<question>" --datasource "<datasource>" --workspace "<workspace>"
 ```
 
 - Follow-up ask in the same OpenClaw session:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  ask "<question>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" ask "<question>"
 ```
 
 - Force a brand-new SQLBot chat while staying in the same OpenClaw session:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  ask --new-chat "<question>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" ask --new-chat "<question>"
 ```
 
 - List dashboards:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  dashboard list --workspace "<workspace>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" dashboard list --workspace "<workspace>"
 ```
 
 - Show dashboard detail:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  dashboard show "<dashboard-id>" --workspace "<workspace>"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" dashboard show "<dashboard-id>" --workspace "<workspace>"
 ```
 
 - Export dashboard:
 
 ```bash
-python3 "${CLAUDE_SKILL_DIR}/sqlbot_skills.py" \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  dashboard export "<dashboard-id>" --workspace "<workspace>" --output "./dashboard.jpg"
+python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py --openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant" dashboard export "<dashboard-id>" --workspace "<workspace>" --output "./dashboard.jpg"
 ```
 
 ## What `ask` returns
@@ -186,8 +166,8 @@ Do not expose `telemetry` or `artifacts` paths to end users in normal operation.
 - Prefer exact workspace names or numeric IDs.
 - Prefer exact datasource names or numeric IDs.
 - Use `session show` when you are not sure what is already bound.
-- In production `corp-assistant`, infer SQLBot intent from the user's likely business/data request and session context; do not require an explicit trigger prefix.
-- Skip this skill for pure greeting/help/capability turns and for clearly out-of-scope non-data requests.
+- In production `corp-assistant`, use SQLBot for every concrete non-greeting request; do not require an explicit trigger prefix.
+- Skip this skill only for pure greeting/help/capability turns or opening chats that contain no concrete request.
 - If `sqlbot_skills.py` reports missing OpenClaw session context, call `session_status` and retry with explicit `--openclaw-session-key` and `--openclaw-agent-id`.
 - For production requests, prefer `ask "<question>"` even when the question is phrased in broad business language rather than explicit metric language.
 - Prefer plain `ask "<question>"` for follow-ups in the same chat.
