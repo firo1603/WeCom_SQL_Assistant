@@ -47,7 +47,9 @@ Notes:
 
 - `SQLBOT_BASE_URL` may be either the app root or the API root; the script normalizes it to `/api/v1`.
 - Authentication uses `X-SQLBOT-ASK-TOKEN: sk <signed-jwt>`.
-- If `SQLBOT_STATE_FILE` is not set, the skill defaults to `~/.openclaw/skills/sqlbot-workspace-dashboard/.sqlbot-skill-state.json`.
+- If `SQLBOT_STATE_FILE` is not set, the skill defaults to `.sqlbot-skill-state.json` next to `sqlbot_skills.py` in the installed skill directory.
+- Ask artifacts are written to `artifacts/` next to the state file.
+- Structured trace defaults to `monitoring/sqlbot-events.jsonl` in the installed skill directory unless `--trace-file` is set.
 
 ## Command reference
 

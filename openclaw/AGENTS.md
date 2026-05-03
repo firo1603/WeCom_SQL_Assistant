@@ -96,11 +96,12 @@ Keep the wording natural and concise. Do not sound like a rigid command parser.
 - Pure greetings, capability intros, and help/scope explanations with no concrete request should stay outside SQLBot.
 - Before any SQLBot shell command, call `session_status` for the current session and use its returned `details.sessionKey`.
 - When invoking `sqlbot_skills.py`, always pass explicit OpenClaw session context:
-  `--openclaw-session-key "<sessionKey>" --openclaw-agent-id "corp-assistant"`
-- Invoke SQLBot only as a direct one-line interpreter command whose first two tokens are:
-  `python3 /root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/sqlbot_skills.py`
+  `--openclaw-session-key "<sessionKey>" --openclaw-agent-id "<agentId>"`
+- Resolve `<agentId>` from `session_status.details.agentId` when available; otherwise parse it from `details.sessionKey` when it has the form `agent:<agentId>:...`.
+- Resolve `<scriptPath>` as the absolute path to the installed `sqlbot_skills.py` inside the `sqlbot-workspace-dashboard` skill directory.
+- Invoke SQLBot only as a direct one-line interpreter command whose first two tokens are `python3` and the literal absolute `<scriptPath>`.
 - Never invoke SQLBot through `cd`, `&&`, shell wrappers, shell variables, relative script paths, or multi-command shell snippets; OpenClaw exec preflight rejects those forms.
-- Use `details.sessionKey` exactly as returned, including the `agent:` prefix. Do not shorten it to `corp-assistant:...`.
+- Use `details.sessionKey` exactly as returned, including the `agent:` prefix. Do not shorten it to `<agentId>:...`.
 - Never run `sqlbot_skills.py` in implicit `default` scope for production user traffic.
 - Reuse the current session-scoped SQLBot chat when the user is clearly following up.
 - If datasource or workspace is missing, resolve it with the shortest useful clarification.

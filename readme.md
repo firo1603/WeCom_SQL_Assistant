@@ -2,7 +2,7 @@
 
 > 企业微信自然语言数据查询集成方案 —— 基于 OpenClaw + SQLBot
 
-用户在企业微信中直接提问，系统自动路由至 SQLBot 执行查询，并将摘要、图表和结构化产物回传至企业微信。本仓库提供 OpenClaw workspace 配置、SQLBot skill 实现和完整运行机制说明。
+用户在企业微信中直接提问，系统自动路由至 SQLBot 执行查询，并将摘要、图表和结构化产物回传至企业微信。本仓库提供 OpenClaw workspace 配置、SQLBot skill 实现、监控面板和完整运行机制说明。
 
 ---
 
@@ -16,6 +16,7 @@
 - **结构化错误分类**：`summary.error_kind` 提供机器可读的错误类型字段
 - **执行链路 Trace**：可选开启 JSONL 格式阶段埋点与 `telemetry` 返回
 - **Dashboard 截图导出**（JPG / PNG / PDF，依赖 Playwright）
+- **运维监控面板**：基于 FastAPI + Alpine.js 的单页看板，展示链路总览、请求追踪、Session 视图和 SQLBot 健康状态
 
 ---
 
@@ -23,22 +24,42 @@
 
 ```text
 WeCom_SQL_Assistant/
-├── readme.md
+├── README.md
 ├── corp-assistant-sqlbot-workflow.md        # 完整工作流说明
-└── openclaw/
-    ├── AGENTS.md                            # agent 路由规则与行为约束
-    ├── IDENTITY.md                          # agent 身份定义
-    ├── SOUL.md                              # 输出风格约束
-    ├── USER.md                              # 用户模型假设
-    ├── TOOLS.md                             # 工具使用边界与可观测性说明
-    ├── HEARTBEAT.md                         # 运行优先级
-    └── skills/
-        └── sqlbot-workspace-dashboard/
-            ├── SKILL.md                     # skill 调用规范与命令模板
-            ├── README.md                    # skill 说明与新特性文档
-            ├── reference.md                 # 命令参考
-            ├── sqlbot_skills.py             # skill 实现
-            └── .env.example                 # 环境变量模板
+├── openclaw/
+│   ├── AGENTS.md                            # agent 路由规则与行为约束
+│   ├── IDENTITY.md                          # agent 身份定义
+│   ├── SOUL.md                              # 输出风格约束
+│   ├── USER.md                              # 用户模型假设
+│   ├── TOOLS.md                             # 工具使用边界与可观测性说明
+│   ├── HEARTBEAT.md                         # 运行优先级
+│   ├── MEMORY.md                            # agent 记忆文件
+│   ├── DREAMS.md                            # 长期目标
+│   └── skills/
+│       └── sqlbot-workspace-dashboard/
+│           ├── SKILL.md                     # skill 调用规范与命令模板
+│           ├── README.md                    # skill 说明与新特性文档
+│           ├── reference.md                 # 命令参考
+│           ├── sqlbot_skills.py             # skill 实现
+│           └── .env.example                 # 环境变量模板
+└── monitor/                                 # 运维监控面板
+    ├── app.py                               # FastAPI 主程序（路由、API、认证）
+    ├── auth.py                              # bcrypt 密码存储 + itsdangerous cookie 会话
+    ├── config.toml                          # 运行时配置（路径、端口、超时等）
+    ├── requirements.txt                     # Python 依赖
+    ├── setup.sh                             # 一键部署脚本
+    ├── corp-assistant-monitor.service       # systemd unit 文件
+    ├── nginx.conf.example                   # nginx 反代配置示例
+    ├── readers/
+    │   ├── trace.py                         # 读 sqlbot-events.jsonl，计算总览/瀑布
+    │   ├── state.py                         # 读 .sqlbot-skill-state.json，检测 session 异常
+    │   ├── artifacts.py                     # 扫描 artifacts/ 目录，读取 manifest.json
+    │   └── sqlbot_health.py                 # 主动探活 SQLBot API
+    ├── templates/
+    │   ├── login.html                       # 登录页
+    │   └── change_password.html             # 首次登录强制改密页
+    └── static/
+        └── index.html                       # 单页前端（Alpine.js + Chart.js + Bootstrap 5）
 ```
 
 ---
@@ -58,6 +79,8 @@ flowchart TD
     SQLBot --> DB["业务数据源"]
     Skill --> Artifacts["raw / normalized / csv / chart / manifest"]
     Skill --> Trace["monitoring/sqlbot-events.jsonl（可选）"]
+    Trace --> Monitor["Corp Assistant Monitor（运维面板）"]
+    Artifacts --> Monitor
 ```
 
 | 组件 | 职责 |
@@ -67,6 +90,7 @@ flowchart TD
 | `corp-assistant` | 消息分类、路由规则、对外输出约束 |
 | `sqlbot-workspace-dashboard` | SQLBot 查询、会话绑定、数据源切换、产物写入 |
 | SQLBot | SQL 生成、查询执行、图表返回 |
+| Corp Assistant Monitor | 只读运维看板，展示链路健康状态与请求追踪 |
 
 ---
 
@@ -140,6 +164,34 @@ pip install pillow
 # Dashboard 截图导出
 pip install playwright
 playwright install chromium
+```
+
+### 6. 部署监控面板
+
+监控面板运行于 `192.168.4.15`，通过 `192.168.4.11`（nginx）对外暴露。
+
+```bash
+# 在 192.168.4.15 上以 root 运行
+bash monitor/setup.sh
+```
+
+脚本自动完成：复制文件、创建 Python venv、安装依赖、配置防火墙（仅允许 `192.168.4.11` 访问 `8765` 端口）、注册并启动 systemd 服务。
+
+部署完成后访问 `http://192.168.4.11`（经 nginx 反代），默认账号 `admin / admin`，**首次登录强制修改密码**。
+
+根据实际路径编辑 `monitor/config.toml`：
+
+```toml
+[data]
+trace_file    = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/monitoring/sqlbot-events.jsonl"
+state_file    = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/.sqlbot-skill-state.json"
+artifacts_dir = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/artifacts/"
+sessions_dir  = "/root/.openclaw/agents/corp-assistant/sessions/"
+skill_env     = "/root/.openclaw/workspace-corp-assistant-prod/skills/sqlbot-workspace-dashboard/.env"
+
+# 可选：将 session_key（企业微信 userid）映射为显示名
+[user_aliases]
+# "wxxxxxxxxxxxxxxxxx" = "张三"
 ```
 
 ---
@@ -220,6 +272,54 @@ python3 sqlbot_skills.py \
 
 # 发起查询
 python3 sqlbot_skills.py \
+  --openclaw-session-key "<sessionKey>" \
+  --openclaw-agent-id "corp-assistant" \
+  ask "本周各客户出货量排行"
+
+# 强制新建 SQLBot chat
+python3 sqlbot_skills.py \
+  --openclaw-session-key "<sessionKey>" \
+  --openclaw-agent-id "corp-assistant" \
+  ask --new-chat "重新从客户维度分析本月业务量"
+
+# 切换 datasource
+python3 sqlbot_skills.py \
+  --openclaw-session-key "<sessionKey>" \
+  --openclaw-agent-id "corp-assistant" \
+  datasource switch "<datasource>" --workspace "<workspace>"
+
+# 重置当前 session（保留 workspace/datasource 绑定）
+python3 sqlbot_skills.py \
+  --openclaw-session-key "<sessionKey>" \
+  --openclaw-agent-id "corp-assistant" \
+  session reset
+
+# 完全重置（清空 workspace/datasource 绑定）
+python3 sqlbot_skills.py \
+  --openclaw-session-key "<sessionKey>" \
+  --openclaw-agent-id "corp-assistant" \
+  session reset --full
+```
+
+---
+
+## 监控面板功能
+
+| 页面 | 说明 |
+|---|---|
+| 总览 | 今日请求数、成功率、平均/P95 耗时、错误数、活跃 Session 数（10 秒自动刷新） |
+| 请求追踪 | 按状态/日期/Session 过滤，点击行查看执行阶段瀑布图 |
+| Session 视图 | 所有 scope 的 workspace/datasource/chat 绑定状态，异常行高亮 |
+| SQLBot 健康 | 主动探活 SQLBot API，显示可达状态和错误原因 |
+
+---
+
+## 安全说明
+
+- `.env`（含 SQLBot API Key）、`openclaw.json`（含企业微信 secret）均在 `.gitignore` 中排除，**切勿提交**
+- 监控面板仅允许来自 nginx 反代服务器（`192.168.4.11`）的请求访问，防火墙已在 `setup.sh` 中自动配置
+- 首次登录强制修改默认密码，密码使用 bcrypt 存储
+
   --openclaw-session-key "<sessionKey>" \
   --openclaw-agent-id "corp-assistant" \
   ask "本周各客户出货量排行"
