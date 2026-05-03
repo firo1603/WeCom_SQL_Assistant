@@ -101,7 +101,7 @@ flowchart TD
 | [SQLBot](https://github.com/dataease/SQLBot) | 已部署，并生成 API Access Key / Secret Key |
 | OpenClaw | 已部署 |
 | 企业微信机器人 | 已创建，启用长连接模式，获取 `botid` 和 `secret` |
-| Python 3.9+ | 运行 `sqlbot_skills.py` |
+| Python 3.9+ | 运行 `sqlbot_skills.py` 和 `monitor/app.py` |
 | Pillow（可选） | 本地渲染 chart.png |
 | Playwright（可选） | Dashboard 截图导出 |
 
@@ -308,46 +308,10 @@ python3 sqlbot_skills.py \
 | 页面 | 说明 |
 |---|---|
 | 总览 | 今日请求数、成功率、平均/P95 耗时、错误数、活跃 Session 数（10 秒自动刷新） |
+| 对话历史 | 从 manifest.json 读取，支持按用户/数据源/关键字/状态筛选，展开可查看 SQL 和摘要 |
 | 请求追踪 | 按状态/日期/Session 过滤，点击行查看执行阶段瀑布图 |
 | Session 视图 | 所有 scope 的 workspace/datasource/chat 绑定状态，异常行高亮 |
 | SQLBot 健康 | 主动探活 SQLBot API，显示可达状态和错误原因 |
-
----
-
-## 安全说明
-
-- `.env`（含 SQLBot API Key）、`openclaw.json`（含企业微信 secret）均在 `.gitignore` 中排除，**切勿提交**
-- 监控面板仅允许来自 nginx 反代服务器（`192.168.4.11`）的请求访问，防火墙已在 `setup.sh` 中自动配置
-- 首次登录强制修改默认密码，密码使用 bcrypt 存储
-
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  ask "本周各客户出货量排行"
-
-# 强制新建 SQLBot chat
-python3 sqlbot_skills.py \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  ask --new-chat "重新从客户维度分析本月业务量"
-
-# 切换 datasource
-python3 sqlbot_skills.py \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  datasource switch "<datasource>" --workspace "<workspace>"
-
-# 重置当前 session（保留 workspace/datasource 绑定）
-python3 sqlbot_skills.py \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  session reset
-
-# 完全重置（清空 workspace/datasource 绑定）
-python3 sqlbot_skills.py \
-  --openclaw-session-key "<sessionKey>" \
-  --openclaw-agent-id "corp-assistant" \
-  session reset --full
-```
 
 ---
 
@@ -376,6 +340,14 @@ python3 sqlbot_skills.py \
 
 ---
 
+## 安全说明
+
+- `.env`（含 SQLBot API Key）、`openclaw.json`（含企业微信 secret）均在 `.gitignore` 中排除，**切勿提交**
+- 监控面板仅允许来自 nginx 反代服务器（`192.168.4.11`）的请求访问，防火墙已在 `setup.sh` 中自动配置
+- 首次登录强制修改默认密码，密码使用 bcrypt 存储
+
+---
+
 ## 变更同步要求
 
 涉及生产行为调整时，需同步以下文件：
@@ -386,6 +358,102 @@ python3 sqlbot_skills.py \
 4. `openclaw/skills/sqlbot-workspace-dashboard/sqlbot_skills.py`
 5. `corp-assistant-sqlbot-workflow.md`
 6. 本 README
+
+---
+
+## 监控面板实现进度
+
+> ✅ 已实现  ⬜ 未实现  🔲 部分实现
+
+面板设计分四个阶段：
+
+- ✅ P0：只读已有文件，快速上线可观测面板
+- ✅ P1：补充 SQLBot skill 结构化 trace，精确记录 SQLBot 执行阶段
+- ⬜ P2：补充企微入口/出口埋点，精确记录消息接收和投递结果
+- ⬜ P3：增加告警和运维操作，但默认保持只读
+
+### 链路总览 🔲 部分实现
+
+- ⬜ 企微通道状态（需 P2 企微埋点，暂无数据来源）
+- ⬜ corp-assistant agent 状态（需 P2 企微埋点，暂无数据来源）
+- ✅ SQLBot API 探活状态
+- ✅ 今日请求数、成功率、失败率、空结果率
+- ✅ 平均耗时、P95 耗时
+- ⬜ 活跃用户数（仅统计了活跃 Session 数，用户数未去重单独展示）
+- ✅ 活跃 session 数
+- ✅ 最近错误 Top N
+
+### 请求追踪 🔲 部分实现
+
+- ✅ 时间、企业微信用户（别名映射）、sessionKey、chat_id、record_id、状态、总耗时
+- ✅ 按用户、session、状态过滤
+- ⬜ sessionId、问题摘要、skill 是否命中（trace JSONL 中无此字段）
+- ⬜ delivery_failed / timeout 状态（需 P2 企微埋点）
+- ⬜ 按 record_id、时间范围筛选
+
+### 单次请求详情 🔲 部分实现
+
+- ✅ 执行瀑布图（skill 内各阶段）
+- ⬜ agent 侧阶段（message_received / message_sent 等，需 P2）
+- ⬜ 请求追踪详情页关联 artifacts 文件（raw-result / chart.png / data.csv）
+
+### Session 视图 🔲 部分实现
+
+- ✅ scope_key、workspace、datasource、chat_id、record_id、最近问题、更新时间
+- ✅ 异常标记：datasource 缺失、default scope、无 chat_id
+- ⬜ 异常标记：session 频繁重建、chat 为空但已有连续追问、artifacts 缺失
+
+### SQLBot 运行视图 🔲 部分实现
+
+- ✅ SQLBot API 是否可达（HTTP 探活）
+- ✅ query 成功/失败/空结果统计（在总览实现）
+- ⬜ 默认 workspace/datasource 是否可解析（仅探活连通性）
+- ⬜ 最近 SQLBot record 列表、chart 渲染成功率、CSV 生成成功率
+
+### 对话历史（设计外新增）✅ 已实现
+
+从 `artifacts/manifest.json` 读取：
+
+- ✅ 按用户、数据源、关键字、状态过滤
+- ✅ 展开详情：执行 SQL、返回摘要、error_reason
+- ✅ 用户别名配置（服务端持久化，多用户共享）
+
+### 数据来源接入状态
+
+| 文件 | 已接入 |
+|---|---|
+| `.sqlbot-skill-state.json`（SQLBot session 状态） | ✅ |
+| `sqlbot-events.jsonl`（skill trace） | ✅ |
+| `artifacts/<scope>/<record>/manifest.json` | ✅ |
+| `sessions/sessions.json`（agent session registry） | ⬜ 配置在 config.toml 但面板未读取 |
+| `sessions/*.jsonl`（agent 对话和工具调用） | ⬜ |
+| `logs/config-health.json`（配置健康） | ⬜ |
+
+---
+
+## Skill 实现进度
+
+> ✅ 已实现  ⬜ 未实现
+
+1. ✅ trace 参数：`--trace-id`、`--trace-file`、`--no-emit-trace`，未传时自动生成 trace_id
+2. ✅ 结构化事件日志（JSONL）：写入 `monitoring/sqlbot-events.jsonl`，字段含 stage / status / error_kind / duration_ms 等
+3. ✅ 执行阶段埋点：session_context.resolve / state.load / workspace.resolve / datasource.resolve / chat.start / question.stream / record.data.fetch / result.normalize / chart.plan / artifact.write_* / state.save / ask.finish
+4. ✅ 错误分类标准化：config_error / auth_error / network_error / sqlbot_api_error / sql_execution_error / timeout / empty_result / artifact_error / state_error
+5. ✅ `ask` 返回体新增 `telemetry` 字段：trace_id / started_at / finished_at / duration_ms / stage_durations_ms
+6. ✅ artifact manifest：每次 `ask` 写 `manifest.json`，含 trace_id / session_key / question / workspace / datasource / chat_id / record_id / row_count / chart_kind / SQL 摘要 / 文件索引
+7. ⬜ `python3 sqlbot_skills.py health` CLI 命令（当前仅面板侧做了 HTTP 探活）
+8. ⬜ `python3 sqlbot_skills.py session list` 全量列表子命令（现只有 `session show`，面板直接读文件替代）
+9. ✅ 隐私与脱敏：trace 不记录 API key / secret；SQL 仅在展开详情时显示
+
+---
+
+## 后续补充（优先级排序）
+
+1. **请求追踪详情 → 关联 artifacts 文件**：瀑布图下方增加 raw-result / chart.png / data.csv 链接或预览
+2. **SQLBot 健康 → workspace/datasource 可解析验证**：调用 API 确认默认配置实际存在
+3. **`sqlbot_skills.py health` CLI 命令**：本地一键健康自检，也可供面板调用
+4. **Session 视图异常检测增强**：频繁重建、chat 为空但已有追问
+5. **P2 企微埋点**：message_received / message_sent 阶段，需改动 OpenClaw 或企微 webhook 入口
 
 ---
 
