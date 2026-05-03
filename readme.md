@@ -301,6 +301,18 @@ python3 sqlbot_skills.py \
   session reset --full
 ```
 
+### SQLBot 子模块维护
+
+```bash
+# 首次 clone 本项目后，初始化子模块
+git submodule update --init --recursive
+
+# 更新 SQLBot 到上游最新 commit
+cd SQLBot && git pull origin main && cd ..
+git add SQLBot
+git commit -m "chore: update SQLBot submodule"
+```
+
 ---
 
 ## 监控面板功能
